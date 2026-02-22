@@ -363,10 +363,21 @@ PLOT_STYLE = {
 }
 
 FARBEN = [
-    "#89b4fa","#a6e3a1","#f38ba8","#fab387",
-    "#cba6f7","#f9e2af","#94e2d5","#89dceb",
-    "#b4befe","#eba0ac","#74c7ec","#d9e0ee",
+    "#89b4fa","#cba6f7","#fab387","#f9e2af",
+    "#94e2d5","#89dceb","#b4befe","#74c7ec",
+    "#d9e0ee","#7287fd","#e5c890","#85c1dc",
 ]
+
+
+def _berechne_tagesaenderung(info: dict) -> float:
+    """
+    Einheitliche Tagesveränderung: aktueller Kurs vs. Tagesstartkurs (08:00 Uhr).
+    Wird überall verwendet – Embed UND Graph-Titel stimmen so immer überein.
+    """
+    start = info.get("tagesstart_preis", info["preis"])
+    if not start:
+        return 0.0
+    return (info["preis"] - start) / start * 100
 
 
 def _get_heutigen_tagesbereich():
@@ -416,15 +427,10 @@ def _chart_single(sym: str, info: dict) -> discord.File:
     timestamps = [datetime.fromtimestamp(r[0], BERLIN_TZ).replace(tzinfo=None) for r in hist]
     prices     = [r[1] for r in hist]
 
-    kurshistorie_gesamt = info.get("kurshistorie", [])
-    if len(kurshistorie_gesamt) >= 2:
-        change = (info["preis"] - kurshistorie_gesamt[-2][1]) / kurshistorie_gesamt[-2][1] * 100
-    else:
-        change = 0.0
-
+    change  = _berechne_tagesaenderung(info)
     sign    = "+" if change >= 0 else ""
-    chg_col = "#a6e3a1" if change >= 0 else "#f38ba8"
-    col     = "#89b4fa"
+    chg_col = "#ffffff" if change >= 0 else "#f9e2af"
+    col     = "#cba6f7"
 
     with matplotlib.rc_context(PLOT_STYLE):
         fig, ax = plt.subplots(figsize=(12, 5), dpi=120)
@@ -509,10 +515,9 @@ def _chart_multi() -> Optional[discord.File]:
                 prices = [x[1] for x in hist]
                 dates  = [datetime.fromtimestamp(x[0], BERLIN_TZ).replace(tzinfo=None) for x in hist]
 
-                p_start = prices[0]
-                change  = (prices[-1] - p_start) / p_start * 100 if p_start else 0
+                change  = _berechne_tagesaenderung(info)
                 sign    = "+" if change >= 0 else ""
-                chg_c   = "#a6e3a1" if change >= 0 else "#f38ba8"
+                chg_c   = "#ffffff" if change >= 0 else "#f9e2af"
 
                 ax.fill_between(dates, prices, min(prices) * 0.997, color=col, alpha=0.14)
                 ax.plot(dates, prices, color=col, linewidth=1.8)
@@ -594,7 +599,7 @@ class AktienAuswahlView(ui.View):
         )]
         for sym, info in alle[:24]:
             hist   = info.get("kurshistorie", [])
-            change = (info["preis"] - hist[-2][1]) / hist[-2][1] * 100 if len(hist) >= 2 else 0.0
+            change = _berechne_tagesaenderung(info)
             sign   = "+" if change >= 0 else ""
             optionen.append(discord.SelectOption(
                 label=f"{sym} - {info['name'][:28]}",
@@ -666,7 +671,7 @@ def _aktien_select_optionen(nur_mit_bestand: Optional[str] = None) -> list:
     optionen = []
     for sym, info in alle[:25]:
         hist   = info.get("kurshistorie", [])
-        change = (info["preis"] - hist[-2][1]) / hist[-2][1] * 100 if len(hist) >= 2 else 0.0
+        change = _berechne_tagesaenderung(info)
         sign   = "+" if change >= 0 else ""
         optionen.append(discord.SelectOption(
             label=f"{sym} - {info['name'][:28]}",
@@ -803,7 +808,7 @@ async def _baue_markt_embed() -> discord.Embed:
         lines = []
         for sym, info in alle:
             hist   = info.get("kurshistorie", [])
-            change = (info["preis"] - hist[-2][1]) / hist[-2][1] * 100 if len(hist) >= 2 else 0.0
+            change = _berechne_tagesaenderung(info)
             sign   = "+" if change >= 0 else ""
             # Umlauf-Info anzeigen wenn vorhanden
             umlauf_str = ""
@@ -831,7 +836,7 @@ async def _baue_markt_embed() -> discord.Embed:
 
 def _baue_aktie_embed(sym: str, info: dict) -> discord.Embed:
     hist   = info.get("kurshistorie", [])
-    change = (info["preis"] - hist[-2][1]) / hist[-2][1] * 100 if len(hist) >= 2 else 0.0
+    change = _berechne_tagesaenderung(info)
     sign   = "+" if change >= 0 else ""
     color  = 0x2ECC71 if change >= 0 else 0xE74C3C
     embed  = discord.Embed(title=f"{sym} - {info['name']}", color=color,
