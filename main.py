@@ -457,13 +457,6 @@ def _chart_single(sym: str, info: dict) -> discord.File:
     ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"{x:,.2f}"))
     ax.grid(True, zorder=0)
     ax.spines[["top", "right"]].set_visible(False)
-
-    # Y-Achsen-Beschriftungen einfärben: grün wenn Kurs gestiegen, rot wenn gefallen
-    if len(prices) >= 2:
-        tick_farbe = "#a6e3a1" if prices[-1] >= prices[0] else "#f38ba8"
-        for label in ax.get_yticklabels():
-            label.set_color(tick_farbe)
-
     plt.tight_layout(rect=[0, 0, 1, 0.94])
 
     buf = io.BytesIO()
@@ -528,11 +521,6 @@ def _chart_multi() -> Optional[discord.File]:
                     f"{sym}  {prices[-1]:,.2f}  {sign}{change:.2f}%",
                     fontsize=9, color=chg_c, pad=3
                 )
-
-                # Y-Achsen-Zahlen einfärben: grün = gestiegen, rot = gefallen
-                tick_farbe = "#a6e3a1" if prices[-1] >= p_start else "#f38ba8"
-                for label in ax.get_yticklabels():
-                    label.set_color(tick_farbe)
             else:
                 ax.text(
                     0.5, 0.5,
