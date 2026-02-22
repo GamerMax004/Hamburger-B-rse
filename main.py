@@ -339,7 +339,7 @@ def ist_handelszeit() -> bool:
 
 def handelszeit_embed() -> discord.Embed:
     return discord.Embed(
-        title="Börse geschlossen!",
+        title="Aktienmarkt geschlossen!",
         description=f"Sehr geehrter Kunde,\n> der Handel an unserer Börse ist ausschließlich täglich zwischen **{HANDELS_START:02d}:00** und **{HANDELS_ENDE:02d}:00 Uhr** möglich. Außerhalb dieser Zeiten stehen keine Kauf- oder Verkaufsfunktionen zur Verfügung. Wir bitten um Ihr Verständnis und freuen uns, Sie während der offiziellen Handelszeiten wieder begrüßen zu dürfen.\n**Mit freundlichen Grüßen**\n~ Hamburger Börse",
         color=0x0f0f17
     )
@@ -567,8 +567,8 @@ def _chart_multi() -> Optional[discord.File]:
             r, c = divmod(idx, cols)
             axes[r][c].set_visible(False)
 
-        fig.suptitle("Börsen Live-Board", fontsize=13,
-                      fontweight="bold", color="#c8c8e0")
+        fig.suptitle("Aktienmarkt (Live)", fontsize=13,
+                      fontweight="bold", color="#ff3131")
         plt.tight_layout(rect=[0, 0, 1, 0.95])
 
         buf = io.BytesIO()
@@ -819,10 +819,10 @@ class AuszahlungBestätigenView(ui.View):
 
 async def _baue_markt_embed() -> discord.Embed:
     alle = list(aktien().items())
-    embed = discord.Embed(title="Börsen Live-Board", color=0x5865F2,
+    embed = discord.Embed(title="Hamburger Aktienmarkt (Live)", color=0xff3131,
                            timestamp=datetime.now(timezone.utc))
     if not alle:
-        embed.description = "*(Noch keine Aktien im Markt)*"
+        embed.description = "*Aktuell sind noch keine Aktien auf dem Aktienmarkt verfügbar!*"
     else:
         lines = []
         for sym, info in alle:
@@ -842,13 +842,11 @@ async def _baue_markt_embed() -> discord.Embed:
     offen  = m_val.get("markt_offen", True)
     jetzt  = get_now()
     zeit_ok = HANDELS_START <= jetzt.hour < HANDELS_ENDE
-    status = "Geöffnet" if (offen and zeit_ok) else "Geschlossen"
-    embed.add_field(name="Status",       value=status,                               inline=True)
-    embed.add_field(name="Gebühr",      value=f"{m_val['handelsgebühr']*100:.2f}%",   inline=True)
-    embed.add_field(name="Volatilität", value=f"{m_val['volatilitaet']*100:.2f}%",     inline=True)
-    embed.add_field(name="Handelszeiten",
-                     value=f"{HANDELS_START:02d}:00 - {HANDELS_ENDE:02d}:00 Uhr",   inline=True)
-    embed.set_footer(text=f"Aktualisiert alle {m_val.get('graph_intervall', 60)}s  |  /aktien_kaufen  /aktien_verkaufen  /portfolio")
+    status = "> <:3518checkmark:1474879341237243985> - Geöffnet!" if (offen and zeit_ok) else "> <:3518crossmark:1474879342319505645> - Geschlossen"
+    embed.add_field(name="__Status__",       value=status,                               inline=False)
+    embed.add_field(name="__Handelszeiten__",
+                     value=f"> <:9847public:1474879406249087086> - {HANDELS_START:02d}:00 - {HANDELS_ENDE:02d}:00 Uhr",   inline=False)
+    embed.set_footer(text="Copyright © Hamburger Aktienmarkt", icon_url="https://images-ext-1.discordapp.net/external/beDfOlHvyEbXyIJaFlBMbgOI-SBC2V84UShwwm0S1VU/%3Fsize%3D4096/https/cdn.discordapp.com/avatars/1474801508905386004/c139c712c939fb5fd367e36af88a218f.png?format=webp&quality=lossless&width=291&height=291")
     embed.set_image(url="attachment://chart.png")
     return embed
 
@@ -858,11 +856,10 @@ def _baue_aktie_embed(sym: str, info: dict) -> discord.Embed:
     change = _berechne_tagesaenderung(info)
     sign   = "+" if change >= 0 else ""
     color  = 0x2ECC71 if change >= 0 else 0xE74C3C
-    embed  = discord.Embed(title=f"{sym} - {info['name']}", color=color,
-                            timestamp=get_now())
-    embed.add_field(name="Kurs",        value=f"**{info['preis']:,.4f} EUR**",              inline=True)
-    embed.add_field(name="Änderung",   value=f"{sign}{change:.2f}%",                   inline=True)
-    embed.add_field(name="Volatilität",value=f"{info.get('volatilitaet', 0)*100:.2f}%",inline=True)
+    embed  = discord.Embed(title=f"{sym} - {info['name']}", color=color)
+    embed.add_field(name="__Aktieninformationen__", value=f"> <:9654dollar:1474879405133136094> - `{info['preis']:,.4f} €`\n> <:4549activity:1474879353279090841> - `{sign}{change:.2f} %`", inline=False)
+    embed.add_field(name="Kurs", value=f"**{info['preis']:,.4f} EUR**",inline=True)
+    embed.add_field(name="Änderung", value=f"{sign}{change:.2f}%",inline=True)
 
     # Umlauf / Verfügbarkeit anzeigen
     max_st = info.get("max_stueckzahl")
@@ -870,15 +867,13 @@ def _baue_aktie_embed(sym: str, info: dict) -> discord.Embed:
         umlauf    = info.get("umlauf", 0)
         verfügbar = max_st - umlauf
         embed.add_field(
-            name="Umlauf / Verfügbar",
-            value=f"`{umlauf:,}` verkauft  |  `{verfügbar:,}` verfügbar  |  `{max_st:,}` gesamt",
-            inline=False
-        )
+            name="__Verfügbare Aktien__", value=f"> `{verfügbar:,}` Aktien",  inline=False)
 
     heute_hist = _filtere_heutige_history(hist)
     if len(heute_hist) >= 2:
-        embed.add_field(name="Tages-Hoch", value=f"{max(h[1] for h in heute_hist):,.4f} EUR", inline=True)
-        embed.add_field(name="Tages-Tief", value=f"{min(h[1] for h in heute_hist):,.4f} EUR", inline=True)
+        embed.add_field(name="__Tageshoch__", value=f"> <:4669uparrow:1475132690792714382> `{max(h[1] for h in heute_hist):,.4f} €`", inline=True)
+        embed.add_field(name="__Tagestief__", value=f"> <:4669downarrow:1475132689609789511> `{min(h[1] for h in heute_hist):,.4f} €`", inline=True)
+        embed.set_footer(text="Copyright © Hamburger Aktienmarkt", icon_url="https://images-ext-1.discordapp.net/external/beDfOlHvyEbXyIJaFlBMbgOI-SBC2V84UShwwm0S1VU/%3Fsize%3D4096/https/cdn.discordapp.com/avatars/1474801508905386004/c139c712c939fb5fd367e36af88a218f.png?format=webp&quality=lossless&width=291&height=291")
     embed.set_image(url="attachment://chart.png")
     return embed
 
@@ -938,13 +933,12 @@ async def db_backup_senden():
         n_pf      = len(portfolios())
         embed = discord.Embed(
             title="Automatisches DB-Backup",
-            color=0x5865F2,
-            timestamp=datetime.now(timezone.utc)
+            color=0xff3131
         )
         embed.add_field(name="Aktien",     value=str(n_aktien), inline=True)
         embed.add_field(name="Portfolios", value=str(n_pf),     inline=True)
         embed.add_field(name="Datei",      value=f"`börse_db_{ts_str}.json`", inline=False)
-        embed.set_footer(text="Wiederherstellen: /db_laden (Leitungsebene)")
+        embed.set_footer(text="Copyright © Hamburger Aktienmarkt", icon_url="https://images-ext-1.discordapp.net/external/beDfOlHvyEbXyIJaFlBMbgOI-SBC2V84UShwwm0S1VU/%3Fsize%3D4096/https/cdn.discordapp.com/avatars/1474801508905386004/c139c712c939fb5fd367e36af88a218f.png?format=webp&quality=lossless&width=291&height=291")
 
         await kanal.send(embed=embed, file=datei)
         log.info(f"DB-Backup gesendet ({n_aktien} Aktien, {n_pf} Portfolios)")
@@ -1028,7 +1022,7 @@ async def _do_kaufen(interaction: discord.Interaction, sym: str, menge: int):
     kursänderung = info["preis"] - alter_preis
     sign_k = "+" if kursänderung >= 0 else ""
 
-    embed = discord.Embed(title="Kauf erfolgreich", color=0x2ECC71)
+    embed = discord.Embed(title="Kauf erfolgreich!", color=0x2ECC71)
     embed.set_author(name=interaction.user.display_name, icon_url=interaction.user.display_avatar.url)
     embed.add_field(name="Aktie",        value=f"**{sym}** - {info['name']}", inline=False)
     embed.add_field(name="Menge",        value=f"{menge:,}",                  inline=True)
@@ -1058,21 +1052,21 @@ async def _do_verkaufen(interaction: discord.Interaction, sym: str, menge: int):
     if not ist_handelszeit():
         return await _reply(interaction, embed=handelszeit_embed(), ephemeral=True)
     if not m().get("markt_offen", True):
-        return await _reply(interaction, content="Der Markt ist manuell geschlossen.", ephemeral=True)
+        return await _reply(interaction, content="Der Markt ist ||manuell|| geschlossen!", ephemeral=True)
     if not hat_portfolio(uid):
-        return await _reply(interaction, content="Du hast kein Portfolio.", ephemeral=True)
+        return await _reply(interaction, content="Du hast kein Portfolio!", ephemeral=True)
 
     mp  = m()
     pf  = get_portfolio(uid)
     pos = pf.get("positionen", {}).get(sym, {})
     if pos.get("menge", 0) < menge:
         return await _reply(interaction,
-            content=f"Du besitzt nur **{pos.get('menge', 0):,}** Aktien von {sym}.",
+            content=f"Du besitzt nur **{pos.get('menge', 0):,}** Aktien von {sym}!",
             ephemeral=True)
 
     info = get_aktie(sym)
     if not info:
-        return await _reply(interaction, content=f"Aktie `{sym}` nicht gefunden.", ephemeral=True)
+        return await _reply(interaction, content=f"Aktie `{sym}` nicht gefunden!", ephemeral=True)
 
     verkaufkurs   = info["preis"] * (1 - mp["spread"] / 2)
     gebühr       = verkaufkurs * menge * mp["handelsgebühr"]
@@ -1178,10 +1172,9 @@ async def cmd_portfolio(interaction: discord.Interaction, nutzer: Optional[disco
     ziel_name = (nutzer or interaction.user).display_name
     pf        = get_portfolio(ziel_uid)
     if not pf:
-        return await interaction.followup.send("Kein Portfolio vorhanden.", ephemeral=True)
+        return await interaction.followup.send("Kein Portfolio vorhanden!", ephemeral=True)
 
-    embed = discord.Embed(title=f"Portfolio - {ziel_name}", color=0x5865F2,
-                           timestamp=datetime.now(timezone.utc))
+    embed = discord.Embed(title=f"Portfolio - {ziel_name}", color=0xff3131)
     embed.add_field(name="Guthaben", value=fmt(pf["guthaben"]), inline=True)
 
     depot_wert = 0.0
@@ -1217,6 +1210,7 @@ async def cmd_portfolio(interaction: discord.Interaction, nutzer: Optional[disco
               f"*(Freibetrag gilt auf den Bruttoerlös beim Verkauf)*",
         inline=False
     )
+    embed.set_footer(text="Copyright © Hamburger Aktienmarkt", icon_url="https://images-ext-1.discordapp.net/external/beDfOlHvyEbXyIJaFlBMbgOI-SBC2V84UShwwm0S1VU/%3Fsize%3D4096/https/cdn.discordapp.com/avatars/1474801508905386004/c139c712c939fb5fd367e36af88a218f.png?format=webp&quality=lossless&width=291&height=291")
     await interaction.followup.send(embed=embed, ephemeral=True)
 
 
@@ -1229,10 +1223,10 @@ async def cmd_aktien_kaufen(interaction: discord.Interaction):
     if not hat_portfolio(str(interaction.user.id)):
         return await interaction.response.send_message("Du hast kein Portfolio. Bitte wende dich an einen Mitarbeiter.", ephemeral=True)
     if not aktien():
-        return await interaction.response.send_message("Keine Aktien verfügbar.", ephemeral=True)
+        return await interaction.response.send_message("Keine Aktien verfügbar!", ephemeral=True)
     opts = _aktien_select_optionen()
     if not opts:
-        return await interaction.response.send_message("Keine Aktien vorhanden.", ephemeral=True)
+        return await interaction.response.send_message("Keine Aktien vorhanden!", ephemeral=True)
     await interaction.response.send_message(
         "<:490209buybutton:1474867799393435648> Welche Aktie möchtest du kaufen?",
         view=KaufenSelectView(str(interaction.user.id)), ephemeral=True
@@ -1247,10 +1241,10 @@ async def cmd_aktien_verkaufen(interaction: discord.Interaction):
         return await interaction.response.send_message(embed=handelszeit_embed(), ephemeral=True)
     uid = str(interaction.user.id)
     if not hat_portfolio(uid):
-        return await interaction.response.send_message("Du hast kein Portfolio.", ephemeral=True)
+        return await interaction.response.send_message("Du hast kein Portfolio!", ephemeral=True)
     pf = get_portfolio(uid)
     if not pf.get("positionen"):
-        return await interaction.response.send_message("Du hast keine Aktien im Depot.", ephemeral=True)
+        return await interaction.response.send_message("Du hast keine Aktien im Depot!", ephemeral=True)
     await interaction.response.send_message(
         "<:730336sellbutton:1474867813452746822> Welche Aktie möchtest du verkaufen?",
         view=VerkaufenSelectView(uid), ephemeral=True
@@ -1265,9 +1259,9 @@ async def cmd_portfolio_erstellen(interaction: discord.Interaction,
         return await interaction.response.send_message(embed=keine_rechte_embed("Mitarbeiter"), ephemeral=True)
     uid = str(kunde.id)
     if hat_portfolio(uid):
-        return await interaction.response.send_message(f"{kunde.mention} hat bereits ein Portfolio.", ephemeral=True)
+        return await interaction.response.send_message(f"{kunde.mention} hat bereits ein Portfolio!", ephemeral=True)
     if startguthaben < 0:
-        return await interaction.response.send_message("Startguthaben muss >= 0 sein.", ephemeral=True)
+        return await interaction.response.send_message("Startguthaben muss >= 0 sein!", ephemeral=True)
 
     portfolios()[uid] = {
         "erstellt_von": str(interaction.user.id), "erstellt_am": int(time.time()),
@@ -1276,7 +1270,7 @@ async def cmd_portfolio_erstellen(interaction: discord.Interaction,
     }
     await save_db()
 
-    embed = discord.Embed(title="Portfolio erstellt", color=0x2ECC71)
+    embed = discord.Embed(title="Portfolio erstellt!", color=0x2ECC71)
     embed.add_field(name="Kunde",         value=kunde.mention,           inline=True)
     embed.add_field(name="Startguthaben", value=fmt(startguthaben),       inline=True)
     embed.add_field(name="Erstellt von",  value=interaction.user.mention, inline=True)
@@ -1292,9 +1286,9 @@ async def cmd_guthaben_aufladen(interaction: discord.Interaction,
     uid = str(kunde.id)
     pf  = get_portfolio(uid)
     if not pf:
-        return await interaction.response.send_message(f"{kunde.mention} hat kein Portfolio.", ephemeral=True)
+        return await interaction.response.send_message(f"{kunde.mention} hat kein Portfolio!", ephemeral=True)
     if betrag <= 0:
-        return await interaction.response.send_message("Betrag muss > 0 sein.", ephemeral=True)
+        return await interaction.response.send_message("Betrag muss > 0 sein!", ephemeral=True)
 
     pf["guthaben"] += betrag
     pf.setdefault("transaktionen", []).append({
