@@ -1,0 +1,15 @@
+# Discord Bot – Abhängigkeiten
+# Installieren mit: pip install -r requirements.txt
+
+# Discord-Bot-Framework
+discord.py>=2.3.2
+
+# Diagramme / Charts
+matplotlib>=3.7.0
+
+# Zeitzonen (Backport für Python < 3.9, ab 3.9 ist zoneinfo in der Stdlib enthalten)
+backports.zoneinfo; python_version < "3.9"
+
+# Alle weiteren Importe (asyncio, json, io, logging, math, os,
+# random, threading, time, warnings, datetime, typing, http.server, copy)
+# sind Teil der Python-Standardbibliothek und müssen nicht installiert werden.
