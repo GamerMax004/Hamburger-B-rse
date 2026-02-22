@@ -99,6 +99,13 @@ MARKT_DEFAULTS = {
     "markt_offen":      True,
 }
 
+# ─── Kurseinfluss durch Käufe/Verkäufe ───────────────────────────
+# Wie stark eine Order den Kurs bewegt, abhängig vom Umlaufanteil.
+# Formel: Einfluss = HANDELS_IMPACT_FAKTOR * (menge / max_stueckzahl)
+# Beispiel: Kauf von 1% der Aktien -> +0.5% Kursanstieg (bei Faktor 0.5)
+HANDELS_IMPACT_FAKTOR = 0.5   # max. Kursveränderung bei 100%-Kauf (50%)
+HANDELS_IMPACT_MAX    = 0.05  # Einzelner Trade kann max. 5% bewegen
+
 # ═══════════════════════════════════════════════════════════════════
 # ─── RENDER HEALTH-CHECK SERVER ───────────────────────────────────
 # ═══════════════════════════════════════════════════════════════════
@@ -212,6 +219,44 @@ def _berechne_neuen_kurs(sym: str, info: dict) -> float:
     return max(0.01, round(info["preis"] * (1 + raw), 4))
 
 
+def _wende_handelseinfluss_an(sym: str, info: dict, menge: int, ist_kauf: bool) -> float:
+    """
+    Berechnet und wendet den Kurseinfluss einer Order an.
+
+    Logik:
+    - Kauf  -> Nachfrage steigt -> Kurs steigt
+    - Verkauf -> Angebot steigt -> Kurs fällt
+    - Stärke abhängig vom Anteil der gehandelten Menge an der Gesamtmenge (max_stueckzahl)
+    - Ohne max_stueckzahl: fester Ersatzwert (10.000) als Referenz
+
+    Gibt den neuen Kurs zurück.
+    """
+    max_st = info.get("max_stueckzahl", 10_000)
+    # Anteil der Order an der Gesamtmenge (0.0 – 1.0)
+    anteil = menge / max_st if max_st > 0 else 0.0
+
+    # Roheinfluss: proportional zum Anteil, skaliert mit Faktor
+    raw_einfluss = HANDELS_IMPACT_FAKTOR * anteil
+
+    # Richtung: Kauf = positiv, Verkauf = negativ
+    if not ist_kauf:
+        raw_einfluss = -raw_einfluss
+
+    # Kappen auf ±HANDELS_IMPACT_MAX pro Trade
+    einfluss = max(-HANDELS_IMPACT_MAX, min(HANDELS_IMPACT_MAX, raw_einfluss))
+
+    neuer_kurs = max(0.01, round(info["preis"] * (1 + einfluss), 4))
+
+    richtung = "↑" if einfluss > 0 else "↓"
+    log.info(
+        f"[Handelseinfluss] {sym}: {'Kauf' if ist_kauf else 'Verkauf'} {menge} Stück "
+        f"({anteil*100:.2f}% von {max_st}) -> {einfluss*100:+.3f}% {richtung} "
+        f"| {info['preis']:.4f} -> {neuer_kurs:.4f} EUR"
+    )
+
+    return neuer_kurs
+
+
 async def update_kurse():
     if not m().get("markt_offen", True):
         return
@@ -315,41 +360,20 @@ FARBEN = [
 
 
 def _get_heutigen_tagesbereich():
-    """
-    Gibt Start (08:00) und Ende (22:00) des heutigen Handelstages zurück.
-    Beide als timezone-naive datetime-Objekte (bereits in Berliner Zeit konvertiert),
-    damit Matplotlib korrekt damit umgehen kann.
-    """
-    jetzt = get_now()  # Berlin-Zeitzone
-    # Tagesstart immer um HANDELS_START Uhr
+    jetzt = get_now()
     start = jetzt.replace(hour=HANDELS_START, minute=0, second=0, microsecond=0)
     ende  = jetzt.replace(hour=HANDELS_ENDE,  minute=0, second=0, microsecond=0)
-    # Für Matplotlib zurück zu naive datetimes (bereits in Berliner Zeit)
     return start.replace(tzinfo=None), ende.replace(tzinfo=None)
 
 
 def _filtere_heutige_history(kurshistorie: list) -> list:
-    """
-    Filtert die Kurshistorie auf Einträge des HEUTIGEN Handelstages (08:00–22:00 Berliner Zeit).
-    Timestamps in der DB sind Unix-Timestamps (UTC).
-    Wir konvertieren in Berliner Zeit und filtern auf den Handelszeitraum.
-
-    WICHTIG: Einträge VOR 08:00 Uhr werden NICHT berücksichtigt,
-    damit der Graph vor Handelsbeginn leer bleibt.
-    """
-    jetzt      = get_now()  # Berlin-Zeitzone
-    # Tagesstart = heute um HANDELS_START Uhr in Berlin
+    jetzt      = get_now()
     ts_start   = jetzt.replace(hour=HANDELS_START, minute=0, second=0, microsecond=0).timestamp()
     ts_ende    = jetzt.replace(hour=HANDELS_ENDE,  minute=0, second=0, microsecond=0).timestamp()
     return [r for r in kurshistorie if ts_start <= r[0] <= ts_ende]
 
 
 def _x_achse_konfigurieren(ax, heute_start: datetime, heute_ende: datetime):
-    """
-    Setzt die X-Achse exakt auf den Handelstag 08:00–22:00.
-    Ticks alle 2 Stunden: 08:00, 10:00, 12:00, 14:00, 16:00, 18:00, 20:00, 22:00.
-    Ticks liegen GENAU auf den vollen Stunden.
-    """
     ticks = []
     h = HANDELS_START
     while h <= HANDELS_ENDE:
@@ -363,24 +387,15 @@ def _x_achse_konfigurieren(ax, heute_start: datetime, heute_ende: datetime):
 
 
 def _chart_single(sym: str, info: dict) -> discord.File:
-    """
-    Einzelchart für eine Aktie.
-    X-Achse: kompletter Handelstag 08:00–22:00, Ticks alle 2h (deutsche Zeit).
-
-    VOR 08:00 Uhr: Graph ist leer (keine Datenpunkte, kein Fallback-Linie).
-    NACH 08:00 Uhr: Tatsächliche Handelsdaten werden angezeigt.
-    """
     heute_start, heute_ende = _get_heutigen_tagesbereich()
     hist = _filtere_heutige_history(info.get("kurshistorie", []))
 
-    # Berliner Zeit für die Prüfung, ob Handelszeit schon begonnen hat
     jetzt_berlin = get_now()
     handelszeit_begonnen = (
         jetzt_berlin.hour > HANDELS_START
         or (jetzt_berlin.hour == HANDELS_START and jetzt_berlin.minute >= 0)
     )
 
-    # Nur Fallback verwenden, wenn Handelszeit bereits begonnen hat und noch keine Daten da sind
     if len(hist) < 2 and handelszeit_begonnen and ist_handelszeit():
         ts_now = int(time.time())
         ts_start_heute = int(
@@ -391,7 +406,6 @@ def _chart_single(sym: str, info: dict) -> discord.File:
     timestamps = [datetime.fromtimestamp(r[0], BERLIN_TZ).replace(tzinfo=None) for r in hist]
     prices     = [r[1] for r in hist]
 
-    # Veränderung berechnen: entweder vs. Tagesstart oder letzten Datenpunkt
     kurshistorie_gesamt = info.get("kurshistorie", [])
     if len(kurshistorie_gesamt) >= 2:
         change = (info["preis"] - kurshistorie_gesamt[-2][1]) / kurshistorie_gesamt[-2][1] * 100
@@ -405,7 +419,6 @@ def _chart_single(sym: str, info: dict) -> discord.File:
     with matplotlib.rc_context(PLOT_STYLE):
         fig, ax = plt.subplots(figsize=(12, 5), dpi=120)
 
-        # Kurs-Linie und Fläche – nur wenn Daten vorhanden
         if len(prices) >= 2:
             price_min = min(prices)
             ax.fill_between(timestamps, prices, price_min * 0.997, color=col, alpha=0.14)
@@ -417,7 +430,6 @@ def _chart_single(sym: str, info: dict) -> discord.File:
                 color=chg_col, fontsize=10, fontweight="bold"
             )
         else:
-            # Vor Handelsbeginn: leerer Chart mit aktuellem Kurs als Info-Text
             ax.text(
                 0.5, 0.5,
                 f"Handel beginnt um {HANDELS_START:02d}:00 Uhr\nAktueller Kurs: {info['preis']:,.4f} EUR",
@@ -426,11 +438,9 @@ def _chart_single(sym: str, info: dict) -> discord.File:
                 color="#555577", fontsize=11
             )
 
-        # Titel ohne Emojis (kein Emoji-Font auf Render/Linux-Servern)
         fig.suptitle(f"{sym} - {info['name']}", fontsize=14,
                       fontweight="bold", color="#c8c8e0")
 
-    # X-Achse: kompletter Tag, Ticks auf vollen Stunden
     _x_achse_konfigurieren(ax, heute_start, heute_ende)
     plt.setp(ax.get_xticklabels(), rotation=25, ha="right")
 
@@ -448,13 +458,6 @@ def _chart_single(sym: str, info: dict) -> discord.File:
 
 
 def _chart_multi() -> Optional[discord.File]:
-    """
-    Multi-Chart für alle Aktien.
-    X-Achse: kompletter Handelstag 08:00–22:00, Ticks alle 2h (deutsche Zeit).
-
-    VOR 08:00 Uhr: Alle Subcharts sind leer (kein Fallback auf aktuellen Kurs).
-    NACH 08:00 Uhr: Tatsächliche Handelsdaten werden angezeigt.
-    """
     alle = list(aktien().items())
     if not alle:
         return None
@@ -483,7 +486,6 @@ def _chart_multi() -> Optional[discord.File]:
 
             hist = _filtere_heutige_history(info.get("kurshistorie", []))
 
-            # Fallback nur während der Handelszeit, wenn Daten fehlen
             if len(hist) < 2 and handelszeit_begonnen and ist_handelszeit():
                 ts_now = int(time.time())
                 ts_start_heute = int(
@@ -510,7 +512,6 @@ def _chart_multi() -> Optional[discord.File]:
                     fontsize=9, color=chg_c, pad=3
                 )
             else:
-                # Vor Handelsbeginn: leerer Chart mit Hinweis
                 ax.text(
                     0.5, 0.5,
                     f"ab {HANDELS_START:02d}:00 Uhr",
@@ -523,18 +524,15 @@ def _chart_multi() -> Optional[discord.File]:
                     fontsize=9, color="#c8c8e0", pad=3
                 )
 
-            # X-Achse: kompletter Tag, Ticks auf vollen Stunden
             _x_achse_konfigurieren(ax, heute_start, heute_ende)
             ax.tick_params(labelsize=7)
             ax.grid(True, alpha=0.5)
             ax.spines[["top", "right"]].set_visible(False)
 
-        # Leere Subplots ausblenden
         for idx in range(n, rows * cols):
             r, c = divmod(idx, cols)
             axes[r][c].set_visible(False)
 
-        # Haupttitel ohne Emojis
         fig.suptitle("Börsen Live-Board", fontsize=13,
                       fontweight="bold", color="#c8c8e0")
         plt.tight_layout(rect=[0, 0, 1, 0.95])
@@ -740,13 +738,11 @@ class AuszahlungLinkModal(ui.Modal, title="Auszahlung bestätigen"):
         embed.add_field(name="Bestätigt von", value=interaction.user.mention,       inline=True)
         embed.add_field(name="Beleg / Link",   value=link,                           inline=False)
 
-        # Original-Embed in Auszahlungskanal aktualisieren
         try:
             await interaction.message.edit(embed=embed, view=None)
         except Exception:
             pass
 
-        # DM an Kunden
         try:
             member = await interaction.guild.fetch_member(int(self.view_ref.user_id))
             dm = discord.Embed(title="Auszahlung bestätigt", color=0x2ECC71)
@@ -799,7 +795,13 @@ async def _baue_markt_embed() -> discord.Embed:
             hist   = info.get("kurshistorie", [])
             change = (info["preis"] - hist[-2][1]) / hist[-2][1] * 100 if len(hist) >= 2 else 0.0
             sign   = "+" if change >= 0 else ""
-            lines.append(f"**`{sym:<5}`**  `{info['preis']:>10,.4f} EUR`  `{sign}{change:>7.2f}%`")
+            # Umlauf-Info anzeigen wenn vorhanden
+            umlauf_str = ""
+            max_st = info.get("max_stueckzahl")
+            if max_st:
+                umlauf = info.get("umlauf", 0)
+                umlauf_str = f"  `{umlauf:,}/{max_st:,}`"
+            lines.append(f"**`{sym:<5}`**  `{info['preis']:>10,.4f} EUR`  `{sign}{change:>7.2f}%`{umlauf_str}")
         embed.description = "\n".join(lines)
 
     m_val = m()
@@ -827,6 +829,18 @@ def _baue_aktie_embed(sym: str, info: dict) -> discord.Embed:
     embed.add_field(name="Kurs",        value=f"**{info['preis']:,.4f} EUR**",              inline=True)
     embed.add_field(name="Änderung",   value=f"{sign}{change:.2f}%",                   inline=True)
     embed.add_field(name="Volatilität",value=f"{info.get('volatilitaet', 0)*100:.2f}%",inline=True)
+
+    # Umlauf / Verfügbarkeit anzeigen
+    max_st = info.get("max_stueckzahl")
+    if max_st:
+        umlauf    = info.get("umlauf", 0)
+        verfügbar = max_st - umlauf
+        embed.add_field(
+            name="Umlauf / Verfügbar",
+            value=f"`{umlauf:,}` verkauft  |  `{verfügbar:,}` verfügbar  |  `{max_st:,}` gesamt",
+            inline=False
+        )
+
     heute_hist = _filtere_heutige_history(hist)
     if len(heute_hist) >= 2:
         embed.add_field(name="Tages-Hoch", value=f"{max(h[1] for h in heute_hist):,.4f} EUR", inline=True)
@@ -875,10 +889,6 @@ async def graph_aktualisieren():
 # ═══════════════════════════════════════════════════════════════════
 
 async def db_backup_senden():
-    """
-    Sendet alle 3 Stunden die aktuelle Datenbank als JSON-Datei in den
-    Backup-Kanal. Die Datei kann mit /db_laden wiederhergestellt werden.
-    """
     kanal = client.get_channel(DB_BACKUP_KANAL_ID)
     if not kanal:
         log.warning("DB_BACKUP_KANAL_ID nicht gefunden.")
@@ -887,11 +897,9 @@ async def db_backup_senden():
     try:
         db_json = json.dumps(_db, ensure_ascii=False, indent=2)
         buf     = io.BytesIO(db_json.encode("utf-8"))
-        # Deutsche Zeit für den Dateinamen
         ts_str  = get_now().strftime("%Y-%m-%d_%H-%M")
         datei   = discord.File(buf, filename=f"börse_db_{ts_str}.json")
 
-        # Statistik-Zeilen
         n_aktien  = len(aktien())
         n_pf      = len(portfolios())
         embed = discord.Embed(
@@ -925,15 +933,30 @@ async def _do_kaufen(interaction: discord.Interaction, sym: str, menge: int):
     mp = m()
     if not (mp["min_ordergroesse"] <= menge <= mp["max_ordergroesse"]):
         return await _reply(interaction,
-            content=f"Menge muss zwischen {mp['min_ordergröße']} und {mp['max_ordergröße']:,} liegen.",
+            content=f"Menge muss zwischen {mp['min_ordergroesse']} und {mp['max_ordergroesse']:,} liegen.",
             ephemeral=True)
 
     info = get_aktie(sym)
     if not info:
         return await _reply(interaction, content=f"Aktie `{sym}` nicht gefunden.", ephemeral=True)
 
+    # ── Stückzahl-Limit prüfen ────────────────────────────────────
+    max_st = info.get("max_stueckzahl")
+    if max_st is not None:
+        umlauf    = info.get("umlauf", 0)
+        verfügbar = max_st - umlauf
+        if menge > verfügbar:
+            return await _reply(
+                interaction,
+                content=(
+                    f"Nicht genug Aktien verfügbar!\n"
+                    f"Du möchtest **{menge:,}** kaufen, aber nur **{verfügbar:,}** von **{max_st:,}** sind noch verfügbar."
+                ),
+                ephemeral=True
+            )
+
     kaufkurs = info["preis"] * (1 + mp["spread"] / 2)
-    gebühr  = kaufkurs * menge * mp["handelsgebuehr"]
+    gebühr  = kaufkurs * menge * mp["handelsgebühr"]
     gesamt   = kaufkurs * menge + gebühr
 
     pf = get_portfolio(uid)
@@ -948,24 +971,50 @@ async def _do_kaufen(interaction: discord.Interaction, sym: str, menge: int):
     pos["menge"] += menge
     pos["kaufkurs_avg"] = (alter_wert + kaufkurs * menge) / pos["menge"]
 
+    # ── Umlauf erhöhen ────────────────────────────────────────────
+    if max_st is not None:
+        info["umlauf"] = info.get("umlauf", 0) + menge
+
+    # ── Kurseinfluss durch Kauf anwenden (Kurs steigt) ────────────
+    alter_preis    = info["preis"]
+    info["preis"]  = _wende_handelseinfluss_an(sym, info, menge, ist_kauf=True)
+    ts = int(time.time())
+    info.setdefault("kurshistorie", []).append([ts, info["preis"]])
+    if len(info["kurshistorie"]) > 2880:
+        info["kurshistorie"] = info["kurshistorie"][-2880:]
+
     pf.setdefault("transaktionen", []).append({
         "typ": "KAUF", "symbol": sym, "menge": menge,
         "kurs": round(kaufkurs, 4), "gebühr": round(gebühr, 4),
-        "gesamt": round(gesamt, 4), "timestamp": int(time.time()),
+        "gesamt": round(gesamt, 4), "timestamp": ts,
+        "kurseinfluss": round(info["preis"] - alter_preis, 4),
     })
     await save_db()
 
+    kursänderung = info["preis"] - alter_preis
+    sign_k = "+" if kursänderung >= 0 else ""
+
     embed = discord.Embed(title="Kauf erfolgreich", color=0x2ECC71)
     embed.set_author(name=interaction.user.display_name, icon_url=interaction.user.display_avatar.url)
-    embed.add_field(name="Aktie",    value=f"**{sym}** - {info['name']}", inline=False)
-    embed.add_field(name="Menge",    value=f"{menge:,}",                  inline=True)
-    embed.add_field(name="Kaufkurs", value=f"{kaufkurs:,.4f} EUR",        inline=True)
-    embed.add_field(name="Gebühr",  value=fmt(gebühr),                   inline=True)
-    embed.add_field(name="Gesamt",   value=f"**{fmt(gesamt)}**",           inline=True)
-    embed.add_field(name="Guthaben", value=fmt(pf["guthaben"]),            inline=True)
+    embed.add_field(name="Aktie",        value=f"**{sym}** - {info['name']}", inline=False)
+    embed.add_field(name="Menge",        value=f"{menge:,}",                  inline=True)
+    embed.add_field(name="Kaufkurs",     value=f"{kaufkurs:,.4f} EUR",        inline=True)
+    embed.add_field(name="Gebühr",      value=fmt(gebühr),                   inline=True)
+    embed.add_field(name="Gesamt",       value=f"**{fmt(gesamt)}**",           inline=True)
+    embed.add_field(name="Guthaben",     value=fmt(pf["guthaben"]),            inline=True)
+    embed.add_field(
+        name="Kurseinfluss",
+        value=f"`{sign_k}{kursänderung:+.4f} EUR` → neuer Kurs: `{info['preis']:,.4f} EUR`",
+        inline=False
+    )
+    if max_st is not None:
+        embed.add_field(
+            name="Umlauf",
+            value=f"`{info.get('umlauf', 0):,}` / `{max_st:,}` Aktien im Umlauf",
+            inline=False
+        )
     await _reply(interaction, embed=embed, ephemeral=True)
 
-    # ── Graph nach Kauf sofort aktualisieren ──────────────────────
     asyncio.create_task(graph_aktualisieren())
 
 
@@ -992,7 +1041,7 @@ async def _do_verkaufen(interaction: discord.Interaction, sym: str, menge: int):
         return await _reply(interaction, content=f"Aktie `{sym}` nicht gefunden.", ephemeral=True)
 
     verkaufkurs   = info["preis"] * (1 - mp["spread"] / 2)
-    gebühr       = verkaufkurs * menge * mp["handelsgebuehr"]
+    gebühr       = verkaufkurs * menge * mp["handelsgebühr"]
     brutto_erlös = verkaufkurs * menge - gebühr
     gewinn_brutto = (verkaufkurs - pos["kaufkurs_avg"]) * menge - gebühr
 
@@ -1007,6 +1056,19 @@ async def _do_verkaufen(interaction: discord.Interaction, sym: str, menge: int):
     if pos["menge"] == 0:
         del pf["positionen"][sym]
 
+    # ── Umlauf verringern ─────────────────────────────────────────
+    max_st = info.get("max_stueckzahl")
+    if max_st is not None:
+        info["umlauf"] = max(0, info.get("umlauf", 0) - menge)
+
+    # ── Kurseinfluss durch Verkauf anwenden (Kurs fällt) ──────────
+    alter_preis   = info["preis"]
+    info["preis"] = _wende_handelseinfluss_an(sym, info, menge, ist_kauf=False)
+    ts = int(time.time())
+    info.setdefault("kurshistorie", []).append([ts, info["preis"]])
+    if len(info["kurshistorie"]) > 2880:
+        info["kurshistorie"] = info["kurshistorie"][-2880:]
+
     pf.setdefault("transaktionen", []).append({
         "typ": "VERKAUF", "symbol": sym, "menge": menge,
         "kurs": round(verkaufkurs, 4), "gebühr": round(gebühr, 4),
@@ -1014,10 +1076,12 @@ async def _do_verkaufen(interaction: discord.Interaction, sym: str, menge: int):
         "gewinn_brutto": round(gewinn_brutto, 4),
         "steuer": round(steuer_betrag, 4),
         "netto_erlös": round(netto_erlös, 4),
-        "timestamp": int(time.time()),
+        "kurseinfluss": round(info["preis"] - alter_preis, 4),
+        "timestamp": ts,
     })
     await save_db()
 
+    kursänderung = info["preis"] - alter_preis
     color = 0x2ECC71 if gewinn_brutto >= 0 else 0xE74C3C
     sign  = "+" if gewinn_brutto >= 0 else ""
     embed = discord.Embed(title="Verkauf erfolgreich", color=color)
@@ -1046,9 +1110,19 @@ async def _do_verkaufen(interaction: discord.Interaction, sym: str, menge: int):
 
     embed.add_field(name="Netto-Erlös", value=f"**{fmt(netto_erlös)}**", inline=True)
     embed.add_field(name="Guthaben",     value=fmt(pf["guthaben"]),        inline=True)
+    embed.add_field(
+        name="Kurseinfluss",
+        value=f"`{kursänderung:+.4f} EUR` → neuer Kurs: `{info['preis']:,.4f} EUR`",
+        inline=False
+    )
+    if max_st is not None:
+        embed.add_field(
+            name="Umlauf",
+            value=f"`{info.get('umlauf', 0):,}` / `{max_st:,}` Aktien im Umlauf",
+            inline=False
+        )
     await _reply(interaction, embed=embed, ephemeral=True)
 
-    # ── Graph nach Verkauf sofort aktualisieren ────────────────────
     asyncio.create_task(graph_aktualisieren())
 
 # ═══════════════════════════════════════════════════════════════════
@@ -1256,11 +1330,17 @@ async def cmd_portfolio_löschen(interaction: discord.Interaction, kunde: discor
 
 
 @tree.command(name="aktie_hinzufuegen", description="[Leitungsebene] Neue Aktie hinzufügen")
-@app_commands.describe(symbol="Kürzel (max. 6 Zeichen)", name="Vollständiger Name",
-                        startpreis="Startkurs in EUR", volatilitaet="Tägl. Volatilität in % (Standard: 1.5)")
+@app_commands.describe(
+    symbol="Kürzel (max. 6 Zeichen)",
+    name="Vollständiger Name",
+    startpreis="Startkurs in EUR",
+    volatilitaet="Tägl. Volatilität in % (Standard: 1.5)",
+    max_stueckzahl="Maximale Gesamtanzahl an Aktien (0 = unbegrenzt)"
+)
 async def cmd_aktie_hinzufügen(interaction: discord.Interaction,
                                  symbol: str, name: str,
-                                 startpreis: float, volatilitaet: float = 1.5):
+                                 startpreis: float, volatilitaet: float = 1.5,
+                                 max_stueckzahl: int = 0):
     if not ist_leitung(interaction):
         return await interaction.response.send_message(embed=keine_rechte_embed("Leitungsebene"), ephemeral=True)
     sym = symbol.upper()[:6].strip()
@@ -1270,20 +1350,38 @@ async def cmd_aktie_hinzufügen(interaction: discord.Interaction,
         return await interaction.response.send_message(f"Aktie `{sym}` existiert bereits.", ephemeral=True)
     if startpreis <= 0:
         return await interaction.response.send_message("Startpreis muss > 0 sein.", ephemeral=True)
+    if max_stueckzahl < 0:
+        return await interaction.response.send_message("Maximale Stückzahl muss >= 0 sein.", ephemeral=True)
 
     vol = max(0.001, min(1.0, volatilitaet / 100))
-    aktien()[sym] = {
+
+    aktien_eintrag = {
         "name": name, "preis": round(startpreis, 4),
         "volatilitaet": vol, "tagesstart_preis": round(startpreis, 4),
         "kurshistorie": [[int(time.time()), round(startpreis, 4)]],
+        "umlauf": 0,  # Anzahl der aktuell im Umlauf befindlichen Aktien
     }
+
+    # Nur setzen wenn ein Limit gewünscht ist
+    if max_stueckzahl > 0:
+        aktien_eintrag["max_stueckzahl"] = max_stueckzahl
+
+    aktien()[sym] = aktien_eintrag
     await save_db()
 
     embed = discord.Embed(title="Aktie hinzugefügt", color=0x2ECC71)
-    embed.add_field(name="Symbol",      value=sym,                      inline=True)
-    embed.add_field(name="Name",        value=name,                     inline=True)
-    embed.add_field(name="Startpreis",  value=f"{startpreis:,.4f} EUR", inline=True)
-    embed.add_field(name="Volatilität",value=f"{vol*100:.2f}%",        inline=True)
+    embed.add_field(name="Symbol",         value=sym,                      inline=True)
+    embed.add_field(name="Name",           value=name,                     inline=True)
+    embed.add_field(name="Startpreis",     value=f"{startpreis:,.4f} EUR", inline=True)
+    embed.add_field(name="Volatilität",   value=f"{vol*100:.2f}%",        inline=True)
+    embed.add_field(
+        name="Max. Stückzahl",
+        value=f"`{max_stueckzahl:,}`" if max_stueckzahl > 0 else "`Unbegrenzt`",
+        inline=True
+    )
+    embed.add_field(name="Kurseinfluss",
+                     value=f"Käufe/Verkäufe beeinflussen den Kurs (Faktor: {HANDELS_IMPACT_FAKTOR})",
+                     inline=False)
     await interaction.response.send_message(embed=embed)
 
 
@@ -1325,13 +1423,18 @@ async def cmd_markt_parameter(interaction: discord.Interaction):
     embed.add_field(name="Spread",           value=f"`{mp['spread']*100:.4f}%`",          inline=True)
     embed.add_field(name="Tages-Volatilität",value=f"`{mp['volatilitaet']*100:.4f}%`",  inline=True)
     embed.add_field(name="Trend/Drift",      value=f"`{mp['trend']:+.4f}`",               inline=True)
-    embed.add_field(name="Min. Order",       value=f"`{mp['min_ordergröße']} Stück`",  inline=True)
-    embed.add_field(name="Max. Order",       value=f"`{mp['max_ordergröße']:,} Stück`",inline=True)
+    embed.add_field(name="Min. Order",       value=f"`{mp['min_ordergroesse']} Stück`",  inline=True)
+    embed.add_field(name="Max. Order",       value=f"`{mp['max_ordergroesse']:,} Stück`",inline=True)
     embed.add_field(name="Graph-Intervall",  value=f"`{mp['graph_intervall']}s`",         inline=True)
     embed.add_field(name="Markt",            value="`Offen`" if mp.get("markt_offen") else "`Geschlossen`", inline=True)
     embed.add_field(name="Steuer",
                      value=f"Freibetrag: `{fmt(STEUER_FREIBETRAG)}/Jahr`\nSatz: `{STEUER_SATZ*100:.0f}%` auf Gewinne bei Verkauf",
                      inline=True)
+    embed.add_field(
+        name="Kurseinfluss (Trades)",
+        value=f"Faktor: `{HANDELS_IMPACT_FAKTOR}`  |  Max pro Trade: `{HANDELS_IMPACT_MAX*100:.1f}%`",
+        inline=False
+    )
     embed.set_footer(text="Ändern: /markt_parameter_setzen")
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -1460,21 +1563,19 @@ async def cmd_db_laden(interaction: discord.Interaction, datei: discord.Attachme
         raw  = await datei.read()
         data = json.loads(raw.decode("utf-8"))
 
-        # Grundlegende Validierung
         if not all(k in data for k in ("markt", "aktien", "portfolios")):
             return await interaction.followup.send("Ungültige DB-Struktur.", ephemeral=True)
 
         global _db
         _db = data
 
-        # Fehlende Markt-Keys ergänzen
         for k, v in MARKT_DEFAULTS.items():
             _db["markt"].setdefault(k, v)
         _db["markt"].setdefault("graph_nachricht_id", 0)
 
-        # Tagesstart-Preise für alle Aktien sicherstellen
         for sym, info in aktien().items():
             info.setdefault("tagesstart_preis", info["preis"])
+            info.setdefault("umlauf", 0)  # umlauf-Feld für ältere Backups ergänzen
 
         await save_db()
 
@@ -1497,23 +1598,14 @@ async def cmd_db_laden(interaction: discord.Interaction, datei: discord.Attachme
 # ─── ABSCHNITT M: BACKGROUND TASKS ────────────────────────────────
 # ═══════════════════════════════════════════════════════════════════
 
-# Merkt sich, ob wir bereits die "Markt geschlossen"-Nachricht gesendet haben,
-# damit sie nicht bei jedem Tick wiederholt wird.
 _markt_schluss_gemeldet = False
 
 
 @tasks.loop(seconds=60)
 async def kurs_update_task():
-    """
-    Läuft jede Minute (deutsche Zeit).
-    - Innerhalb der Handelszeit: Kurse berechnen.
-    - Genau um HANDELS_ENDE (22:00): Markt automatisch schließen + Schlussnachricht.
-    - Außerhalb: nichts tun.
-    """
     global _markt_schluss_gemeldet
-    jetzt = get_now()  # ← immer Berliner Zeit
+    jetzt = get_now()
 
-    # ── Automatisches Öffnen um HANDELS_START ──────────────────────
     if jetzt.hour == HANDELS_START and jetzt.minute == 0:
         if not m().get("markt_offen", True):
             m()["markt_offen"] = True
@@ -1521,11 +1613,9 @@ async def kurs_update_task():
             await save_db()
             log.info("Markt automatisch geöffnet (08:00 Uhr Berliner Zeit)")
 
-            # Tagesstart-Preis für alle Aktien setzen
             for info in aktien().values():
                 info["tagesstart_preis"] = info["preis"]
 
-            # Einmalige Öffnungs-Nachricht in Graph-Kanal
             kanal = client.get_channel(GRAPH_KANAL_ID)
             if kanal:
                 try:
@@ -1539,14 +1629,12 @@ async def kurs_update_task():
                 except Exception as e:
                     log.error(f"Öffnungs-Nachricht Fehler: {e}")
 
-    # ── Automatisches Schließen um HANDELS_ENDE ────────────────────
     if jetzt.hour == HANDELS_ENDE and jetzt.minute == 0 and not _markt_schluss_gemeldet:
         m()["markt_offen"] = False
         _markt_schluss_gemeldet = True
         await save_db()
         log.info("Markt automatisch geschlossen (22:00 Uhr Berliner Zeit)")
 
-        # Schlussbericht in Graph-Kanal senden
         kanal = client.get_channel(GRAPH_KANAL_ID)
         if kanal:
             try:
@@ -1573,13 +1661,11 @@ async def kurs_update_task():
             except Exception as e:
                 log.error(f"Schlussbericht Fehler: {e}")
 
-        # Letzten Graph des Tages senden
         await graph_aktualisieren()
-        return  # kein weiteres Kurs-Update mehr heute
+        return
 
-    # ── Kurs-Update nur während Handelszeit ───────────────────────
     if not ist_handelszeit():
-        return  # außerhalb 08:00–22:00 (Berliner Zeit) nichts tun
+        return
 
     try:
         await update_kurse()
@@ -1589,12 +1675,8 @@ async def kurs_update_task():
 
 @tasks.loop(seconds=GRAPH_UPDATE_DEFAULT)
 async def graph_post_task():
-    """
-    Graph nur während der Handelszeit (08:00–22:00 Berliner Zeit) posten.
-    Außerhalb überspringen.
-    """
     if not ist_handelszeit():
-        return  # Kein Update außerhalb der Berliner Handelszeiten
+        return
     try:
         await graph_aktualisieren()
     except Exception as e:
@@ -1622,14 +1704,12 @@ async def on_ready():
     await tree.sync()
     log.info("Slash-Commands synchronisiert.")
 
-    # Persistent Views registrieren
     client.add_view(AuszahlungBestätigenView("0", 0, 0, 0))
 
-    # Tagesstart-Preis für alle bestehenden Aktien sicherstellen
     for sym, info in aktien().items():
         info.setdefault("tagesstart_preis", info["preis"])
+        info.setdefault("umlauf", 0)  # Rückwärtskompatibilität
 
-    # Graph-Intervall aus DB laden
     intervall = int(m().get("graph_intervall", GRAPH_UPDATE_DEFAULT))
     graph_post_task.change_interval(seconds=intervall)
 
@@ -1642,7 +1722,6 @@ async def on_ready():
     log.info(f"Bereit. Graph-Intervall: {intervall}s | DB-Backup alle 3h")
 
 
-# Health-Check Server für Render starten (vor client.run!)
 _starte_health_server()
 
 client.run(BOT_TOKEN)
