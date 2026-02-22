@@ -283,35 +283,34 @@ def _steuer_monat_key() -> str:
     return f"{jetzt.year}-{jetzt.month:02d}"
 
 
-def steuer_auf_gewinn(portfolio: dict, gewinn: float) -> dict:
+def steuer_auf_erloes(portfolio: dict, brutto_erloes: float) -> dict:
     """
-    Abgeltungssteuer beim Verkauf auf realisierten Gewinn.
-    Freibetrag von 1.000 EUR gilt pro MONAT und wird monatlich zurückgesetzt.
+    Steuerberechnung beim Verkauf auf den Bruttoerlös:
+      1. Monatlichen Freibetrag (1.000 EUR) vom Bruttoerlös abziehen
+      2. Den verbleibenden Rest mit 25% besteuern
+      3. Steuer wird vom Bruttoerlös abgezogen -> Nettoerlös
+
+    Freibetrag gilt pro MONAT und wird automatisch zurückgesetzt.
     """
     monat = _steuer_monat_key()
     portfolio.setdefault("steuer_verbraucht", {})
     bereits = portfolio["steuer_verbraucht"].get(monat, 0.0)
 
-    if gewinn <= 0:
-        return {
-            "steuerpflichtig": 0.0, "steuer": 0.0,
-            "netto_gewinn": round(gewinn, 2),
-            "freibetrag_rest": round(max(0.0, STEUER_FREIBETRAG - bereits), 2),
-            "neuer_verbrauch": round(bereits, 2),
-            "monat": monat,
-        }
-
-    frei        = max(0.0, STEUER_FREIBETRAG - bereits)
-    steuerpfl   = max(0.0, gewinn - frei)
-    steuer      = round(steuerpfl * STEUER_SATZ, 2)
-    verbraucht  = round(bereits + min(gewinn, frei), 2)
+    frei_rest     = max(0.0, STEUER_FREIBETRAG - bereits)
+    frei_genutzt  = min(brutto_erloes, frei_rest)
+    steuerpfl     = max(0.0, brutto_erloes - frei_genutzt)
+    steuer        = round(steuerpfl * STEUER_SATZ, 2)
+    netto_erloes  = round(brutto_erloes - steuer, 2)
+    neuer_verbrauch = round(bereits + frei_genutzt, 2)
 
     return {
+        "brutto_erloes":   round(brutto_erloes, 2),
+        "frei_genutzt":    round(frei_genutzt, 2),
+        "freibetrag_rest": round(max(0.0, frei_rest - frei_genutzt), 2),
         "steuerpflichtig": round(steuerpfl, 2),
         "steuer":          steuer,
-        "netto_gewinn":    round(gewinn - steuer, 2),
-        "freibetrag_rest": round(frei, 2),
-        "neuer_verbrauch": verbraucht,
+        "netto_erloes":    netto_erloes,
+        "neuer_verbrauch": neuer_verbrauch,
         "monat":           monat,
     }
 
@@ -458,6 +457,13 @@ def _chart_single(sym: str, info: dict) -> discord.File:
     ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"{x:,.2f}"))
     ax.grid(True, zorder=0)
     ax.spines[["top", "right"]].set_visible(False)
+
+    # Y-Achsen-Beschriftungen einfärben: grün wenn Kurs gestiegen, rot wenn gefallen
+    if len(prices) >= 2:
+        tick_farbe = "#a6e3a1" if prices[-1] >= prices[0] else "#f38ba8"
+        for label in ax.get_yticklabels():
+            label.set_color(tick_farbe)
+
     plt.tight_layout(rect=[0, 0, 1, 0.94])
 
     buf = io.BytesIO()
@@ -522,6 +528,11 @@ def _chart_multi() -> Optional[discord.File]:
                     f"{sym}  {prices[-1]:,.2f}  {sign}{change:.2f}%",
                     fontsize=9, color=chg_c, pad=3
                 )
+
+                # Y-Achsen-Zahlen einfärben: grün = gestiegen, rot = gefallen
+                tick_farbe = "#a6e3a1" if prices[-1] >= p_start else "#f38ba8"
+                for label in ax.get_yticklabels():
+                    label.set_color(tick_farbe)
             else:
                 ax.text(
                     0.5, 0.5,
@@ -1056,9 +1067,11 @@ async def _do_verkaufen(interaction: discord.Interaction, sym: str, menge: int):
     brutto_erlös = verkaufkurs * menge - gebühr
     gewinn_brutto = (verkaufkurs - pos["kaufkurs_avg"]) * menge - gebühr
 
-    steuer_info   = steuer_auf_gewinn(pf, gewinn_brutto)
+    # Steuer auf den gesamten Bruttoerlös (nicht nur Gewinn):
+    # 1. Freibetrag abziehen  2. Rest mit 25% besteuern  3. Netto gutschreiben
+    steuer_info   = steuer_auf_erloes(pf, brutto_erlös)
     steuer_betrag = steuer_info["steuer"]
-    netto_erlös  = brutto_erlös - steuer_betrag
+    netto_erlös  = steuer_info["netto_erloes"]
 
     monat = steuer_info["monat"]
     pf.setdefault("steuer_verbraucht", {})[monat] = steuer_info["neuer_verbrauch"]
@@ -1097,25 +1110,27 @@ async def _do_verkaufen(interaction: discord.Interaction, sym: str, menge: int):
     sign  = "+" if gewinn_brutto >= 0 else ""
     embed = discord.Embed(title="Verkauf erfolgreich", color=color)
     embed.set_author(name=interaction.user.display_name, icon_url=interaction.user.display_avatar.url)
-    embed.add_field(name="Aktie",         value=f"**{sym}** - {info['name']}", inline=False)
-    embed.add_field(name="Menge",         value=f"{menge:,}",                  inline=True)
-    embed.add_field(name="Verkaufskurs",  value=f"{verkaufkurs:,.4f} EUR",      inline=True)
-    embed.add_field(name="Gebühr",       value=fmt(gebühr),                   inline=True)
-    embed.add_field(name="Brutto-Erlös", value=fmt(brutto_erlös),             inline=True)
-    embed.add_field(name="Gewinn/Verlust",value=f"{sign}{fmt(gewinn_brutto)}",  inline=True)
+    embed.add_field(name="Aktie",          value=f"**{sym}** - {info['name']}", inline=False)
+    embed.add_field(name="Menge",          value=f"{menge:,}",                  inline=True)
+    embed.add_field(name="Verkaufskurs",   value=f"{verkaufkurs:,.4f} EUR",      inline=True)
+    embed.add_field(name="Gebühr",        value=fmt(gebühr),                   inline=True)
+    embed.add_field(name="Brutto-Erlös",  value=fmt(brutto_erlös),             inline=True)
+    embed.add_field(name="Gewinn/Verlust", value=f"{sign}{fmt(gewinn_brutto)}",  inline=True)
 
-    if steuer_betrag > 0:
-        frei_danach = max(0.0, STEUER_FREIBETRAG - steuer_info["neuer_verbrauch"])
-        embed.add_field(
-            name="Abgeltungssteuer (25%)",
-            value=f"-{fmt(steuer_betrag)}\n(Monatsfreibetrag danach: {fmt(frei_danach)})",
-            inline=False
-        )
+    # Steueraufschlüsselung
+    if steuer_info["frei_genutzt"] > 0 or steuer_betrag > 0:
+        steuer_zeilen = []
+        if steuer_info["frei_genutzt"] > 0:
+            steuer_zeilen.append(f"- Freibetrag genutzt: **-{fmt(steuer_info['frei_genutzt'])}**")
+        if steuer_info["steuerpflichtig"] > 0:
+            steuer_zeilen.append(f"- Steuerpflichtig: **{fmt(steuer_info['steuerpflichtig'])}**")
+            steuer_zeilen.append(f"- Abgeltungssteuer (25%): **-{fmt(steuer_betrag)}**")
+        steuer_zeilen.append(f"Freibetrag diesen Monat noch: **{fmt(steuer_info['freibetrag_rest'])}**")
+        embed.add_field(name="Steuerberechnung", value="\n".join(steuer_zeilen), inline=False)
     else:
-        frei_rest = steuer_info["freibetrag_rest"] - max(0.0, gewinn_brutto)
         embed.add_field(
             name="Steuer",
-            value=f"Keine (Monatsfreibetrag verbleibend: {fmt(max(0.0, frei_rest))})",
+            value=f"Keine (Monatsfreibetrag verbleibend: {fmt(steuer_info['freibetrag_rest'])})",
             inline=False
         )
 
@@ -1185,8 +1200,9 @@ async def cmd_portfolio(interaction: discord.Interaction, nutzer: Optional[disco
     verbraucht = pf.get("steuer_verbraucht", {}).get(monat, 0.0)
     embed.add_field(
         name=f"Abgeltungssteuer-Freibetrag {monat}",
-        value=f"Verbraucht (Verkäufe): {fmt(verbraucht)} / {fmt(STEUER_FREIBETRAG)}\n"
-              f"Verbleibend diesen Monat: **{fmt(max(0.0, STEUER_FREIBETRAG - verbraucht))}**",
+        value=f"Verbraucht: {fmt(verbraucht)} / {fmt(STEUER_FREIBETRAG)}\n"
+              f"Verbleibend diesen Monat: **{fmt(max(0.0, STEUER_FREIBETRAG - verbraucht))}**\n"
+              f"*(Freibetrag gilt auf den Bruttoerlös beim Verkauf)*",
         inline=False
     )
     await interaction.followup.send(embed=embed, ephemeral=True)
