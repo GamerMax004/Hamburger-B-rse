@@ -845,7 +845,7 @@ async def _baue_markt_embed() -> discord.Embed:
     status = "> <:3518checkmark:1474879341237243985> - Geöffnet!" if (offen and zeit_ok) else "> <:3518crossmark:1474879342319505645> - Geschlossen"
     embed.add_field(name="__Status__",       value=status,                               inline=False)
     embed.add_field(name="__Handelszeiten__",
-                     value=f"> <:9847public:1474879406249087086> - {HANDELS_START:02d}:00 - {HANDELS_ENDE:02d}:00 Uhr",   inline=False)
+                     value=f"> {HANDELS_START:02d}:00 Uhr - {HANDELS_ENDE:02d}:00 Uhr",   inline=False)
     embed.set_footer(text="Copyright © Hamburger Aktienmarkt", icon_url="https://images-ext-1.discordapp.net/external/beDfOlHvyEbXyIJaFlBMbgOI-SBC2V84UShwwm0S1VU/%3Fsize%3D4096/https/cdn.discordapp.com/avatars/1474801508905386004/c139c712c939fb5fd367e36af88a218f.png?format=webp&quality=lossless&width=291&height=291")
     embed.set_image(url="attachment://chart.png")
     return embed
