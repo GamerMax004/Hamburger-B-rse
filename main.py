@@ -440,10 +440,20 @@ def _chart_single(sym: str, info: dict) -> discord.File:
             ax.fill_between(timestamps, prices, price_min * 0.997, color=col, alpha=0.14)
             ax.plot(timestamps, prices, color=col, linewidth=2.0)
             ax.scatter([timestamps[-1]], [prices[-1]], color=col, s=55, zorder=5)
-            ax.annotate(
-                f"  {prices[-1]:,.4f}   {sign}{change:.2f}%",
+            # Kurs neutral in Graphfarbe
+            ann = ax.annotate(
+                f"  {prices[-1]:,.4f}",
                 xy=(timestamps[-1], prices[-1]),
-                color=chg_col, fontsize=10, fontweight="bold"
+                color="#c8c8e0", fontsize=10, fontweight="bold"
+            )
+            # %-Änderung direkt danach in grün/rot
+            ax.annotate(
+                f"  {sign}{change:.2f}%",
+                xy=(timestamps[-1], prices[-1]),
+                xytext=(len(f"  {prices[-1]:,.4f}") * 6.5, 0),
+                textcoords="offset points",
+                color="#a6e3a1" if change >= 0 else "#f38ba8",
+                fontsize=10, fontweight="bold"
             )
         else:
             ax.text(
@@ -522,9 +532,18 @@ def _chart_multi() -> Optional[discord.File]:
                 ax.fill_between(dates, prices, min(prices) * 0.997, color=col, alpha=0.14)
                 ax.plot(dates, prices, color=col, linewidth=1.8)
 
+                # Titel: Symbol + Kurs neutral, nur die %-Zahl in grün/rot
                 ax.set_title(
-                    f"{sym}  {prices[-1]:,.2f}  {sign}{change:.2f}%",
-                    fontsize=9, color=chg_c, pad=3
+                    f"{sym}  {prices[-1]:,.2f}  ",
+                    fontsize=9, color="#c8c8e0", pad=3
+                )
+                ax.annotate(
+                    f"{sign}{change:.2f}%",
+                    xy=(1.0, 1.0), xycoords="axes fraction",
+                    xytext=(-4, -2), textcoords="offset points",
+                    ha="right", va="top",
+                    fontsize=9, fontweight="bold",
+                    color="#a6e3a1" if change >= 0 else "#f38ba8",
                 )
             else:
                 ax.text(
