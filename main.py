@@ -568,7 +568,7 @@ def _chart_multi() -> Optional[discord.File]:
             axes[r][c].set_visible(False)
 
         fig.suptitle("Aktienmarkt (Live)", fontsize=13,
-                      fontweight="bold", color="#ff3131")
+                      fontweight="bold", color="#ffffff")
         plt.tight_layout(rect=[0, 0, 1, 0.95])
 
         buf = io.BytesIO()
@@ -828,14 +828,14 @@ async def _baue_markt_embed() -> discord.Embed:
         for sym, info in alle:
             hist   = info.get("kurshistorie", [])
             change = _berechne_tagesaenderung(info)
-            sign   = "+" if change >= 0 else ""
+            sign   = "+" if change >= 0 else "-"
             # Umlauf-Info anzeigen wenn vorhanden
             umlauf_str = ""
             max_st = info.get("max_stueckzahl")
             if max_st:
                 umlauf = info.get("umlauf", 0)
                 umlauf_str = f"  `{umlauf:,}/{max_st:,}`"
-            lines.append(f"**`{sym:<5}`**  `{info['preis']:>10,.4f} EUR`  `{sign}{change:>7.2f}%`{umlauf_str}")
+            lines.append(f"**`{sym:<5}`**  `{info['preis']:>10,.4f} EUR`  `{sign} {change:>7.2f}%`{umlauf_str}")
         embed.description = "\n".join(lines)
 
     m_val = m()
@@ -854,14 +854,13 @@ async def _baue_markt_embed() -> discord.Embed:
 def _baue_aktie_embed(sym: str, info: dict) -> discord.Embed:
     hist   = info.get("kurshistorie", [])
     change = _berechne_tagesaenderung(info)
-    sign   = "+" if change >= 0 else ""
+    sign   = "+" if change >= 0 else "-"
+    emoji  = "<:4669uparrow:1475132690792714382>" if change >= 0 else "<:4669downarrow:1475132689609789511>"
     color  = 0x2ECC71 if change >= 0 else 0xE74C3C
     embed  = discord.Embed(title=f"{sym} - {info['name']}", color=color)
-    embed.add_field(name="__Aktieninformationen__", value=f"> <:9654dollar:1474879405133136094> - `{info['preis']:,.4f} €`\n> <:4549activity:1474879353279090841> - `{sign}{change:.2f} %`", inline=False)
-    embed.add_field(name="Kurs", value=f"**{info['preis']:,.4f} EUR**",inline=True)
-    embed.add_field(name="Änderung", value=f"{sign}{change:.2f}%",inline=True)
+    embed.add_field(name="__Aktieninformationen__", value=f"> <:9654dollar:1474879405133136094> - `{info['preis']:,.2f}€`\n> {emoji} `{sign}{change:.2f}%`", inline=False)
 
-    # Umlauf / Verfügbarkeit anzeigen
+    # Verfügbarkeit anzeigen
     max_st = info.get("max_stueckzahl")
     if max_st:
         umlauf    = info.get("umlauf", 0)
@@ -1175,7 +1174,7 @@ async def cmd_portfolio(interaction: discord.Interaction, nutzer: Optional[disco
         return await interaction.followup.send("Kein Portfolio vorhanden!", ephemeral=True)
 
     embed = discord.Embed(title=f"Portfolio - {ziel_name}", color=0xff3131)
-    embed.add_field(name="Guthaben", value=fmt(pf["guthaben"]), inline=True)
+    embed.add_field(name="__Guthaben__", value=f"> <:9654dollar:1474879405133136094> - {fmt(pf["guthaben"])}", inline=True)
 
     depot_wert = 0.0
     positionen = pf.get("positionen", {})
@@ -1198,18 +1197,14 @@ async def cmd_portfolio(interaction: discord.Interaction, nutzer: Optional[disco
     else:
         embed.add_field(name="Positionen", value="Keine offenen Positionen.", inline=False)
 
-    embed.add_field(name="Depotwert",      value=fmt(depot_wert),                  inline=True)
-    embed.add_field(name="Gesamtvermögen",value=fmt(pf["guthaben"] + depot_wert), inline=True)
+    embed.add_field(name="__Depotwert__", value=f"> <:9654dollar:1474879405133136094> - {fmt(depot_wert)}", inline=False)
+    embed.add_field(name="__Gesamtvermögen__",value=f"> <:9654dollar:1474879405133136094> - {fmt(pf["guthaben"] + depot_wert)}", inline=False)
 
     monat = _steuer_monat_key()
     verbraucht = pf.get("steuer_verbraucht", {}).get(monat, 0.0)
     embed.add_field(
         name=f"Abgeltungssteuer-Freibetrag {monat}",
-        value=f"Verbraucht: {fmt(verbraucht)} / {fmt(STEUER_FREIBETRAG)}\n"
-              f"Verbleibend diesen Monat: **{fmt(max(0.0, STEUER_FREIBETRAG - verbraucht))}**\n"
-              f"*(Freibetrag gilt auf den Bruttoerlös beim Verkauf)*",
-        inline=False
-    )
+        value=f"Verbleibend diesen Monat: **{fmt(max(0.0, STEUER_FREIBETRAG - verbraucht))}**", inline=False)
     embed.set_footer(text="Copyright © Hamburger Aktienmarkt", icon_url="https://images-ext-1.discordapp.net/external/beDfOlHvyEbXyIJaFlBMbgOI-SBC2V84UShwwm0S1VU/%3Fsize%3D4096/https/cdn.discordapp.com/avatars/1474801508905386004/c139c712c939fb5fd367e36af88a218f.png?format=webp&quality=lossless&width=291&height=291")
     await interaction.followup.send(embed=embed, ephemeral=True)
 
