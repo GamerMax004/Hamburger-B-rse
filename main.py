@@ -15,7 +15,7 @@ import time
 import logging
 import os
 import warnings
-from datetime import datetime, timezone, timedelta
+from datetime import date, datetime, timezone, timedelta
 from typing import Optional
 from copy import deepcopy
 import matplotlib
@@ -250,8 +250,8 @@ def _wende_handelseinfluss_an(sym: str, info: dict, menge: int, ist_kauf: bool) 
     richtung = "↑" if einfluss > 0 else "↓"
     log.info(
         f"[Handelseinfluss] {sym}: {'Kauf' if ist_kauf else 'Verkauf'} {menge} Stück "
-        f"({anteil*100:.2f}% von {max_st}) -> {einfluss*100:+.3f}% {richtung} "
-        f"| {info['preis']:.4f} -> {neuer_kurs:.4f} EUR"
+        f"({anteil*100:.2f}% von {max_st}) -> {einfluss*100:+.2f}% {richtung} "
+        f"| {info['preis']:.2f} -> {neuer_kurs:.2f} EUR"
     )
 
     return neuer_kurs
@@ -442,7 +442,7 @@ def _chart_single(sym: str, info: dict) -> discord.File:
             ax.scatter([timestamps[-1]], [prices[-1]], color=col, s=55, zorder=5)
             # Kurs neutral in Graphfarbe
             ann = ax.annotate(
-                f"  {prices[-1]:,.4f}",
+                f"  {prices[-1]:,.2f}",
                 xy=(timestamps[-1], prices[-1]),
                 color="#c8c8e0", fontsize=10, fontweight="bold"
             )
@@ -450,7 +450,7 @@ def _chart_single(sym: str, info: dict) -> discord.File:
             ax.annotate(
                 f"  {sign}{change:.2f}%",
                 xy=(timestamps[-1], prices[-1]),
-                xytext=(len(f"  {prices[-1]:,.4f}") * 6.5, 0),
+                xytext=(len(f"  {prices[-1]:,.2f}") * 6.5, 0),
                 textcoords="offset points",
                 color="#a6e3a1" if change >= 0 else "#f38ba8",
                 fontsize=10, fontweight="bold"
@@ -458,7 +458,7 @@ def _chart_single(sym: str, info: dict) -> discord.File:
         else:
             ax.text(
                 0.5, 0.5,
-                f"Handel beginnt um {HANDELS_START:02d}:00 Uhr\nAktueller Kurs: {info['preis']:,.4f} EUR",
+                f"Handel beginnt um {HANDELS_START:02d}:00 Uhr\nAktueller Kurs: {info['preis']:,.2f}€",
                 transform=ax.transAxes,
                 ha="center", va="center",
                 color="#555577", fontsize=11
@@ -695,7 +695,7 @@ def _aktien_select_optionen(nur_mit_bestand: Optional[str] = None) -> list:
         optionen.append(discord.SelectOption(
             label=f"{sym} - {info['name'][:28]}",
             value=sym,
-            description=f"{info['preis']:,.4f}   {sign}{change:.2f}%",
+            description=f"{info['preis']:,.2f}   {sign}{change:.2f}%",
         ))
     return optionen
 
@@ -828,14 +828,14 @@ async def _baue_markt_embed() -> discord.Embed:
         for sym, info in alle:
             hist   = info.get("kurshistorie", [])
             change = _berechne_tagesaenderung(info)
-            sign   = "+" if change >= 0 else "-"
+            sign   = "+" if change >= 0 else ""
             # Umlauf-Info anzeigen wenn vorhanden
             umlauf_str = ""
             max_st = info.get("max_stueckzahl")
             if max_st:
                 umlauf = info.get("umlauf", 0)
                 umlauf_str = f"  `{umlauf:,}/{max_st:,}`"
-            lines.append(f"**`{sym:<5}`**  `{info['preis']:>10,.4f} EUR`  `{sign} {change:>7.2f}%`{umlauf_str}")
+            lines.append(f"**`{sym:<5}`**  `{info['preis']:>10,.2f} EUR`  `{sign} {change:>7.2f}%`{umlauf_str}")
         embed.description = "\n".join(lines)
 
     m_val = m()
@@ -854,7 +854,7 @@ async def _baue_markt_embed() -> discord.Embed:
 def _baue_aktie_embed(sym: str, info: dict) -> discord.Embed:
     hist   = info.get("kurshistorie", [])
     change = _berechne_tagesaenderung(info)
-    sign   = "+" if change >= 0 else "-"
+    sign   = "+" if change >= 0 else ""
     emoji  = "<:4669uparrow:1475132690792714382>" if change >= 0 else "<:4669downarrow:1475132689609789511>"
     color  = 0x2ECC71 if change >= 0 else 0xE74C3C
     embed  = discord.Embed(title=f"{sym} - {info['name']}", color=color)
@@ -870,8 +870,8 @@ def _baue_aktie_embed(sym: str, info: dict) -> discord.Embed:
 
     heute_hist = _filtere_heutige_history(hist)
     if len(heute_hist) >= 2:
-        embed.add_field(name="__Tageshoch__", value=f"> <:4669uparrow:1475132690792714382> `{max(h[1] for h in heute_hist):,.4f} €`", inline=True)
-        embed.add_field(name="__Tagestief__", value=f"> <:4669downarrow:1475132689609789511> `{min(h[1] for h in heute_hist):,.4f} €`", inline=True)
+        embed.add_field(name="__Tageshoch__", value=f"> <:4669uparrow:1475132690792714382> `{max(h[1] for h in heute_hist):,.2f}€`", inline=True)
+        embed.add_field(name="__Tagestief__", value=f"> <:4669downarrow:1475132689609789511> `{min(h[1] for h in heute_hist):,.2f}€`", inline=True)
         embed.set_footer(text="Copyright © Hamburger Aktienmarkt", icon_url="https://images-ext-1.discordapp.net/external/beDfOlHvyEbXyIJaFlBMbgOI-SBC2V84UShwwm0S1VU/%3Fsize%3D4096/https/cdn.discordapp.com/avatars/1474801508905386004/c139c712c939fb5fd367e36af88a218f.png?format=webp&quality=lossless&width=291&height=291")
     embed.set_image(url="attachment://chart.png")
     return embed
@@ -1023,15 +1023,15 @@ async def _do_kaufen(interaction: discord.Interaction, sym: str, menge: int):
 
     embed = discord.Embed(title="Kauf erfolgreich!", color=0x2ECC71)
     embed.set_author(name=interaction.user.display_name, icon_url=interaction.user.display_avatar.url)
-    embed.add_field(name="Aktie",        value=f"**{sym}** - {info['name']}", inline=False)
-    embed.add_field(name="Menge",        value=f"{menge:,}",                  inline=True)
-    embed.add_field(name="Kaufkurs",     value=f"{kaufkurs:,.4f} EUR",        inline=True)
-    embed.add_field(name="Gebühr",      value=fmt(gebühr),                   inline=True)
-    embed.add_field(name="Gesamt",       value=f"**{fmt(gesamt)}**",           inline=True)
-    embed.add_field(name="Guthaben",     value=fmt(pf["guthaben"]),            inline=True)
+    embed.add_field(name="Aktie", value=f"**{sym}** - {info['name']}", inline=False)
+    embed.add_field(name="Menge", value=f"{menge:,}", inline=True)
+    embed.add_field(name="Kaufkurs", value=f"`{kaufkurs:,.2f}€`", inline=True)
+    embed.add_field(name="Gebühr", value=fmt(gebühr), inline=True)
+    embed.add_field(name="Gesamt", value=f"**{fmt(gesamt)}**", inline=True)
+    embed.add_field(name="Guthaben", value=fmt(pf["guthaben"]), inline=True)
     embed.add_field(
         name="Kurseinfluss",
-        value=f"`{sign_k}{kursänderung:+.4f} EUR` → neuer Kurs: `{info['preis']:,.4f} EUR`",
+        value=f"`{sign_k}{kursänderung:+.2f}€` → neuer Kurs: `{info['preis']:,.2f}€`",
         inline=False
     )
     if max_st is not None:
@@ -1115,12 +1115,12 @@ async def _do_verkaufen(interaction: discord.Interaction, sym: str, menge: int):
     sign  = "+" if gewinn_brutto >= 0 else ""
     embed = discord.Embed(title="Verkauf erfolgreich", color=color)
     embed.set_author(name=interaction.user.display_name, icon_url=interaction.user.display_avatar.url)
-    embed.add_field(name="Aktie",          value=f"**{sym}** - {info['name']}", inline=False)
-    embed.add_field(name="Menge",          value=f"{menge:,}",                  inline=True)
-    embed.add_field(name="Verkaufskurs",   value=f"{verkaufkurs:,.4f} EUR",      inline=True)
-    embed.add_field(name="Gebühr",        value=fmt(gebühr),                   inline=True)
-    embed.add_field(name="Brutto-Erlös",  value=fmt(brutto_erlös),             inline=True)
-    embed.add_field(name="Gewinn/Verlust", value=f"{sign}{fmt(gewinn_brutto)}",  inline=True)
+    embed.add_field(name="Aktie", value=f"**{sym}** - {info['name']}", inline=False)
+    embed.add_field(name="Menge", value=f"{menge:,}", inline=True)
+    embed.add_field(name="Verkaufskurs", value=f"`{verkaufkurs:,.2f}€`", inline=True)
+    embed.add_field(name="Gebühr", value=fmt(gebühr), inline=True)
+    embed.add_field(name="Brutto-Erlös", value=fmt(brutto_erlös), inline=True)
+    embed.add_field(name="Gewinn/Verlust", value=f"{sign}{fmt(gewinn_brutto)}", inline=True)
 
     # Steueraufschlüsselung
     if steuer_info["frei_genutzt"] > 0 or steuer_betrag > 0:
@@ -1143,7 +1143,7 @@ async def _do_verkaufen(interaction: discord.Interaction, sym: str, menge: int):
     embed.add_field(name="Guthaben",     value=fmt(pf["guthaben"]),        inline=True)
     embed.add_field(
         name="Kurseinfluss",
-        value=f"`{kursänderung:+.4f} EUR` → neuer Kurs: `{info['preis']:,.4f} EUR`",
+        value=f"`{kursänderung:+.2f}€` → neuer Kurs: `{info['preis']:,.2f}€`",
         inline=False
     )
     if max_st is not None:
@@ -1190,7 +1190,7 @@ async def cmd_portfolio(interaction: discord.Interaction, nutzer: Optional[disco
             depot_wert += wert
             sign = "+" if pnl >= 0 else ""
             lines.append(
-                f"**{sym}** x{pos['menge']:,}  |  Kauf-Ø {pos['kaufkurs_avg']:,.4f} -> {info['preis']:,.4f} EUR"
+                f"**{sym}** x{pos['menge']:,}  |  Kauf-Ø {pos['kaufkurs_avg']:,.2f} -> {info['preis']:,.2f}€"
                 f"\n  Wert: `{fmt(wert)}`  P&L: `{sign}{fmt(pnl)} ({sign}{pnl_p:.1f}%)`"
             )
         embed.add_field(name="Positionen", value="\n".join(lines), inline=False)
@@ -1398,10 +1398,10 @@ async def cmd_aktie_hinzufügen(interaction: discord.Interaction,
     await save_db()
 
     embed = discord.Embed(title="Aktie hinzugefügt", color=0x2ECC71)
-    embed.add_field(name="Symbol",         value=sym,                      inline=True)
-    embed.add_field(name="Name",           value=name,                     inline=True)
-    embed.add_field(name="Startpreis",     value=f"{startpreis:,.4f} EUR", inline=True)
-    embed.add_field(name="Volatilität",   value=f"{vol*100:.2f}%",        inline=True)
+    embed.add_field(name="Symbol", value=sym, inline=True)
+    embed.add_field(name="Name", value=name, inline=True)
+    embed.add_field(name="Startpreis", value=f"`{startpreis:,.2f}€`", inline=True)
+    embed.add_field(name="Volatilität", value=f"{vol*100:.2f}%", inline=True)
     embed.add_field(
         name="Max. Stückzahl",
         value=f"`{max_stueckzahl:,}`" if max_stueckzahl > 0 else "`Unbegrenzt`",
@@ -1434,8 +1434,8 @@ async def cmd_aktie_löschen(interaction: discord.Interaction, symbol: str):
             })
     await save_db()
     embed = discord.Embed(title="Aktie gelöscht", color=0xE74C3C)
-    embed.add_field(name="Symbol",       value=sym,                       inline=True)
-    embed.add_field(name="Letzter Kurs", value=f"{info['preis']:,.4f} EUR",inline=True)
+    embed.add_field(name="Symbol", value=sym, inline=True)
+    embed.add_field(name="Letzter Kurs", value=f"`{info['preis']:,.2f}€`",inline=True)
     embed.set_footer(text="Bestände wurden liquidiert und gutgeschrieben.")
     await interaction.response.send_message(embed=embed)
 
@@ -1447,17 +1447,15 @@ async def cmd_markt_parameter(interaction: discord.Interaction):
     mp = m()
     embed = discord.Embed(title="Aktuelle Marktparameter", color=0x5865F2,
                            timestamp=datetime.now(timezone.utc))
-    embed.add_field(name="Handelsgebühr",   value=f"`{mp['handelsgebühr']*100:.4f}%`",  inline=True)
-    embed.add_field(name="Spread",           value=f"`{mp['spread']*100:.4f}%`",          inline=True)
-    embed.add_field(name="Tages-Volatilität",value=f"`{mp['volatilitaet']*100:.4f}%`",  inline=True)
-    embed.add_field(name="Trend/Drift",      value=f"`{mp['trend']:+.4f}`",               inline=True)
-    embed.add_field(name="Min. Order",       value=f"`{mp['min_ordergroesse']} Stück`",  inline=True)
-    embed.add_field(name="Max. Order",       value=f"`{mp['max_ordergroesse']:,} Stück`",inline=True)
-    embed.add_field(name="Graph-Intervall",  value=f"`{mp['graph_intervall']}s`",         inline=True)
-    embed.add_field(name="Markt",            value="`Offen`" if mp.get("markt_offen") else "`Geschlossen`", inline=True)
-    embed.add_field(name="Steuer",
-                     value=f"Freibetrag: `{fmt(STEUER_FREIBETRAG)}/Jahr`\nSatz: `{STEUER_SATZ*100:.0f}%` auf Gewinne bei Verkauf",
-                     inline=True)
+    embed.add_field(name="Handelsgebühr", value=f"`{mp['handelsgebühr']*100:.2f}%`", inline=True)
+    embed.add_field(name="Spread", value=f"`{mp['spread']*100:.2f}%`", inline=True)
+    embed.add_field(name="Tages-Volatilität",value=f"`{mp['volatilitaet']*100:.2f}%`", inline=True)
+    embed.add_field(name="Trend/Drift", value=f"`{mp['trend']:+.2f}`", inline=True)
+    embed.add_field(name="Min. Order", value=f"`{mp['min_ordergroesse']} Stück`", inline=True)
+    embed.add_field(name="Max. Order", value=f"`{mp['max_ordergroesse']:,} Stück`", inline=True)
+    embed.add_field(name="Graph-Intervall", value=f"`{mp['graph_intervall']}s`", inline=True)
+    embed.add_field(name="Markt", value="`Offen`" if mp.get("markt_offen") else "`Geschlossen`", inline=True)
+    embed.add_field(name="Steuer", value=f"Freibetrag: `{fmt(STEUER_FREIBETRAG)}/Jahr`\nSatz: `{STEUER_SATZ*100:.0f}%` auf Gewinne bei Verkauf", inline=True)
     embed.add_field(
         name="Kurseinfluss (Trades)",
         value=f"Faktor: `{HANDELS_IMPACT_FAKTOR}`  |  Max pro Trade: `{HANDELS_IMPACT_MAX*100:.1f}%`",
@@ -1607,7 +1605,7 @@ async def cmd_db_laden(interaction: discord.Interaction, datei: discord.Attachme
 
         await save_db()
 
-        embed = discord.Embed(title="Datenbank wiederhergestellt", color=0x2ECC71,
+        embed = discord.Embed(title="Datenbank wiederhergestellt!", color=0x2ECC71,
                                timestamp=datetime.now(timezone.utc))
         embed.add_field(name="Aktien",       value=str(len(aktien())),     inline=True)
         embed.add_field(name="Portfolios",   value=str(len(portfolios())), inline=True)
@@ -1639,7 +1637,7 @@ async def kurs_update_task():
             m()["markt_offen"] = True
             _markt_schluss_gemeldet = False
             await save_db()
-            log.info("Markt automatisch geöffnet (08:00 Uhr Berliner Zeit)")
+            log.info("Markt automatisch geöffnet (08:00 Uhr deutscher Zeit)")
 
             for info in aktien().values():
                 info["tagesstart_preis"] = info["preis"]
@@ -1650,7 +1648,7 @@ async def kurs_update_task():
                     embed = discord.Embed(
                         title="Börse geöffnet!",
                         description=f"> Der Handel ist täglich zwischen **{HANDELS_START:02d}:00** und **{HANDELS_ENDE:02d}:00 Uhr** möglich. Sie können innerhalb dieser Zeiten uneingeschränkt Kauf- und Verkaufsaufträge tätigen. Wir wünschen Ihnen erfolgreiche Handelsgeschäfte.\n**Mit freundlichen Grüßen**\n~ Hamburger Börse",
-                        color=0x0f0f17,
+                        color=0xff3131,
                         timestamp=datetime.now(timezone.utc)
                     )
                     await kanal.send(embed=embed)
@@ -1661,7 +1659,7 @@ async def kurs_update_task():
         m()["markt_offen"] = False
         _markt_schluss_gemeldet = True
         await save_db()
-        log.info("Markt automatisch geschlossen (22:00 Uhr Berliner Zeit)")
+        log.info("Markt automatisch geschlossen (22:00 Uhr deutscher Zeit)")
 
         kanal = client.get_channel(GRAPH_KANAL_ID)
         if kanal:
@@ -1674,17 +1672,17 @@ async def kurs_update_task():
                         ende   = hist[-1][1]
                         change = (ende - start) / start * 100 if start else 0
                         sign   = "+" if change >= 0 else ""
-                        lines.append(f"**`{sym:<5}`**  `{ende:>10,.4f} EUR`  `{sign}{change:>7.2f}%`")
+                        lines.append(f"**`{sym:<5}`**  `{ende:>10,.2f}€`  `{sign}{change:>7.2f}%`")
                     else:
-                        lines.append(f"**`{sym:<5}`**  `{info['preis']:>10,.4f} EUR`  `n/a`")
+                        lines.append(f"**`{sym:<5}`**  `{info['preis']:>10,.2f}€`  `n/a`")
 
                 embed = discord.Embed(
-                    title="Börsenschluss - Tagesübersicht",
-                    description="\n".join(lines) if lines else "Keine Aktien.",
-                    color=0xE74C3C,
-                    timestamp=datetime.now(timezone.utc)
+                    title=f"Börsenschluss - {date}",
+                    description="\n".join(lines) if lines else "Keine Aktien!",
+                    color=0xff3131
                 )
-                embed.set_footer(text=f"Nächste Öffnung: {HANDELS_START:02d}:00 Uhr")
+                embed.add_field(name="__Nächste Öffnung__", value=f"> {HANDELS_START:02d}:00 Uhr!", inline=False)
+                embed.set_footer(text="Copyright © Hamburger Aktienmarkt", icon_url="https://images-ext-1.discordapp.net/external/beDfOlHvyEbXyIJaFlBMbgOI-SBC2V84UShwwm0S1VU/%3Fsize%3D4096/https/cdn.discordapp.com/avatars/1474801508905386004/c139c712c939fb5fd367e36af88a218f.png?format=webp&quality=lossless&width=291&height=291")
                 await kanal.send(embed=embed)
             except Exception as e:
                 log.error(f"Schlussbericht Fehler: {e}")
